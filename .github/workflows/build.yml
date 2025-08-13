@@ -1,8 +1,6 @@
 name: Build LiquidBounce from ZIP
 
 on:
-  push:
-    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
@@ -10,28 +8,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      - name: Unzip source
-        run: |
-          mkdir source
-          unzip "*.zip" -d source
+    - name: Unzip source
+      run: unzip LiquidBounce-Fabric-1.21.1_SafeGL-Mobile.zip
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
+    - name: Set up JDK 21
+      uses: actions/setup-java@v4
+      with:
+        java-version: '21'
+        distribution: 'temurin'
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x source/gradlew
+    - name: Grant execute permission for gradlew
+      run: chmod +x LiquidBounce-Fabric-1.21.1_SafeGL-Mobile/gradlew
 
-      - name: Build with Gradle
-        run: cd source && ./gradlew build
+    - name: Build with Gradle
+      run: cd LiquidBounce-Fabric-1.21.1_SafeGL-Mobile && ./gradlew build
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: LiquidBounce-SafeGL
-          path: source/build/libs/*.jar
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: LiquidBounce-Build
+        path: LiquidBounce-Fabric-1.21.1_SafeGL-Mobile/build/libs/*.jar
