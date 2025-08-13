@@ -8,9 +8,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Set up job
-        run: echo "Starting build job..."
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -24,14 +21,16 @@ jobs:
           distribution: 'temurin'
 
       - name: Grant execute permission for gradlew
-        run: chmod +x $(find . -name gradlew)
+        run: chmod +x $(find source -name gradlew)
 
       - name: Build with Gradle
-        run: $(find . -name gradlew) build
+        run: |
+          cd $(dirname $(find source -name gradlew))
+          ./gradlew build
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: build-output
           path: |
-            **/build/libs/*.jar
+            **/build/libs/*.jar            **/build/libs/*.jar
