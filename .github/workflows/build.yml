@@ -1,101 +1,61 @@
-name: Build LB Stable 1.21.1 (SafeGL)
+name: Build JAR
 
-on:
-  workflow_dispatch:
+on: push: branches: [ main, master ] paths-ignore: - '/*.md' - '/.png' - '**/.jpg' - '/*.jpeg' - '/*.gif' pull_request: workflow_dispatch:
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+Optional: publish release JARs when you push a tag like v1.0.0
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+push: tags: - 'v*'
 
-      - name: Find and unzip latest ZIP
-        run: |
-          set -e
-          ZIP_FILE=$(ls -t *.zip | head -n 1)
-          echo "Found ZIP: $ZIP_FILE"
-          mkdir -p source
-          unzip -q "$ZIP_FILE" -d source
+jobs: build: name: Build (Gradle) runs-on: ubuntu-latest permissions: contents: read steps: - name: Checkout uses: actions/checkout@v4 with: fetch-depth: 0 submodules: recursive
 
-      - name: Set up JDK 21 (Temurin) + Gradle cache
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 21
-          cache: gradle
+- name: Set up JDK 21 (Temurin)
+    uses: actions/setup-java@v4
+    with:
+      distribution: 'temurin'
+      java-version: '21'
+      cache: 'gradle'
 
-      - name: Locate Gradle project
-        id: locate
-        run: |
-          set -e
-          GRADLEW=$(find source -type f -name gradlew | head -n 1)
-          if [ -z "$GRADLEW" ]; then
-            echo "No gradlew found after unzip!" >&2
-            exit 1
-          fi
-          PROJ_DIR=$(dirname "$GRADLEW")
-          echo "PROJECT_DIR=$PROJ_DIR" >> $GITHUB_ENV
-          echo "Found Gradle project at: $PROJ_DIR"
+  - name: Validate Gradle Wrapper
+    uses: gradle/wrapper-validation-action@v2
 
-      - name: Patch versions to 1.21.1 (stable SafeGL)
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
+  - name: Make gradlew executable
+    run: chmod +x gradlew
 
-          # 1) Hạ mọi chuỗi 1.21.4 -> 1.21.1 trong các file cấu hình thường gặp
-          # (an toàn vì bản của bạn đang target 1.21.1)
-          FILES=$(git ls-files 2>/dev/null || true)
-          if [ -z "$FILES" ]; then
-            FILES=$(find . -type f \( -name "gradle.properties" -o -name "build.gradle" -o -name "build.gradle.kts" -o -name "*.toml" -o -name "fabric.mod.json" -o -name "*.properties" -o -name "*.json" \))
-          fi
-          echo "$FILES" | while read -r f; do
-            [ -f "$f" ] || continue
-            sed -i 's/1\.21\.4/1.21.1/g' "$f"
-            sed -i 's/+1\.21\.4/+1.21.1/g' "$f"
-          done
+  - name: Build with Gradle
+    uses: gradle/gradle-build-action@v3
+    with:
+      arguments: >-
+        build --stacktrace --no-daemon
 
-          # 2) Ép yarn_mappings cụ thể (nếu có dòng key trong gradle.properties)
-          if [ -f gradle.properties ]; then
-            if grep -q '^yarn_mappings=' gradle.properties; then
-              sed -i 's/^yarn_mappings=.*/yarn_mappings=1.21.1+build.10/' gradle.properties
-            else
-              echo 'yarn_mappings=1.21.1+build.10' >> gradle.properties
-            fi
-          fi
+  - name: Collect production JARs
+    shell: bash
+    run: |
+      set -euo pipefail
+      mkdir -p artifacts
+      shopt -s globstar nullglob
+      for f in **/build/libs/*.jar; do
+        case "$f" in
+          *-sources.jar|*-javadoc.jar|*-dev.jar|*-tests.jar) ;;
+          *) cp "$f" artifacts/ ;;
+        esac
+      done
+      echo "Collected:" && ls -lah artifacts
 
-          # 3) In thông tin để debug
-          echo "-------- gradle.properties (nếu có) --------"
-          [ -f gradle.properties ] && cat gradle.properties || echo "(not found)"
-          echo "-------- fabric.mod.json (nếu có) -----------"
-          [ -f src/main/resources/fabric.mod.json ] && cat src/main/resources/fabric.mod.json || echo "(not found)"
+  - name: Upload artifacts
+    uses: actions/upload-artifact@v4
+    with:
+      name: jars
+      path: artifacts
+      if-no-files-found: error
+      retention-days: 7
 
-      - name: Grant execute permission for gradlew
-        run: chmod +x "$PROJECT_DIR/gradlew"
+release: name: Release (on tag) needs: build if: startsWith(github.ref, 'refs/tags/') runs-on: ubuntu-latest permissions: contents: write steps: - name: Download build artifacts uses: actions/download-artifact@v4 with: name: jars path: release
 
-      - name: Build (no tests) with stacktrace
-        run: |
-          set -e
-          cd "$PROJECT_DIR"
-          ./gradlew --version
-          ./gradlew build -x test --no-daemon --stacktrace
+- name: Create GitHub Release
+    uses: softprops/action-gh-release@v2
+    with:
+      files: release/*.jar
+      generate_release_notes: true
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Rename JAR to short name (if found)
-        run: |
-          set -e
-          JAR=$(ls "$PROJECT_DIR"/build/libs/*.jar | head -n 1 || true)
-          if [ -z "$JAR" ]; then
-            echo "No jar produced!" >&2
-            exit 1
-          fi
-          mkdir -p out
-          cp "$JAR" out/LB-SafeGL-1.21.1.jar
-          echo "OUTPUT_JAR=out/LB-SafeGL-1.21.1.jar" >> $GITHUB_ENV
-          ls -lh out
-
-      - name: Upload artifact (.jar)
-        uses: actions/upload-artifact@v4
-        with:
-          name: LB-SafeGL-1.21.1
-          path: ${{ env.OUTPUT_JAR }}
