@@ -1,4 +1,4 @@
-name: Build LiquidBounce from ZIP
+name: Build LB Stable 1.21.1 (SafeGL)
 
 on:
   workflow_dispatch:
@@ -6,32 +6,96 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Find and unzip latest ZIP
         run: |
+          set -e
           ZIP_FILE=$(ls -t *.zip | head -n 1)
           echo "Found ZIP: $ZIP_FILE"
+          mkdir -p source
           unzip -q "$ZIP_FILE" -d source
 
-      - name: Set up JDK 21
+      - name: Set up JDK 21 (Temurin) + Gradle cache
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 21
           cache: gradle
 
-      - name: Build with Gradle
+      - name: Locate Gradle project
+        id: locate
         run: |
-          chmod +x $(find source -name gradlew)
-          cd $(dirname $(find source -name gradlew))
-          ./gradlew build --no-daemon
+          set -e
+          GRADLEW=$(find source -type f -name gradlew | head -n 1)
+          if [ -z "$GRADLEW" ]; then
+            echo "No gradlew found after unzip!" >&2
+            exit 1
+          fi
+          PROJ_DIR=$(dirname "$GRADLEW")
+          echo "PROJECT_DIR=$PROJ_DIR" >> $GITHUB_ENV
+          echo "Found Gradle project at: $PROJ_DIR"
 
-      - name: Upload artifacts
+      - name: Patch versions to 1.21.1 (stable SafeGL)
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          # 1) Hạ mọi chuỗi 1.21.4 -> 1.21.1 trong các file cấu hình thường gặp
+          # (an toàn vì bản của bạn đang target 1.21.1)
+          FILES=$(git ls-files 2>/dev/null || true)
+          if [ -z "$FILES" ]; then
+            FILES=$(find . -type f \( -name "gradle.properties" -o -name "build.gradle" -o -name "build.gradle.kts" -o -name "*.toml" -o -name "fabric.mod.json" -o -name "*.properties" -o -name "*.json" \))
+          fi
+          echo "$FILES" | while read -r f; do
+            [ -f "$f" ] || continue
+            sed -i 's/1\.21\.4/1.21.1/g' "$f"
+            sed -i 's/+1\.21\.4/+1.21.1/g' "$f"
+          done
+
+          # 2) Ép yarn_mappings cụ thể (nếu có dòng key trong gradle.properties)
+          if [ -f gradle.properties ]; then
+            if grep -q '^yarn_mappings=' gradle.properties; then
+              sed -i 's/^yarn_mappings=.*/yarn_mappings=1.21.1+build.10/' gradle.properties
+            else
+              echo 'yarn_mappings=1.21.1+build.10' >> gradle.properties
+            fi
+          fi
+
+          # 3) In thông tin để debug
+          echo "-------- gradle.properties (nếu có) --------"
+          [ -f gradle.properties ] && cat gradle.properties || echo "(not found)"
+          echo "-------- fabric.mod.json (nếu có) -----------"
+          [ -f src/main/resources/fabric.mod.json ] && cat src/main/resources/fabric.mod.json || echo "(not found)"
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x "$PROJECT_DIR/gradlew"
+
+      - name: Build (no tests) with stacktrace
+        run: |
+          set -e
+          cd "$PROJECT_DIR"
+          ./gradlew --version
+          ./gradlew build -x test --no-daemon --stacktrace
+
+      - name: Rename JAR to short name (if found)
+        run: |
+          set -e
+          JAR=$(ls "$PROJECT_DIR"/build/libs/*.jar | head -n 1 || true)
+          if [ -z "$JAR" ]; then
+            echo "No jar produced!" >&2
+            exit 1
+          fi
+          mkdir -p out
+          cp "$JAR" out/LB-SafeGL-1.21.1.jar
+          echo "OUTPUT_JAR=out/LB-SafeGL-1.21.1.jar" >> $GITHUB_ENV
+          ls -lh out
+
+      - name: Upload artifact (.jar)
         uses: actions/upload-artifact@v4
         with:
-          name: LiquidBounce-Build
-          path: |
-            **/build/libs/*.jar
+          name: LB-SafeGL-1.21.1
+          path: ${{ env.OUTPUT_JAR }}
